@@ -55,6 +55,8 @@
       </tbody>
     </table>
 
+    <ImportPanel />
+
     <footer class="page-foot">
       <span>共 {{ total }} 条数据接入通道记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
@@ -87,6 +89,7 @@
 import { onMounted, ref } from 'vue'
 
 import { request } from '@/api/client'
+import ImportPanel from './ImportPanel.vue'
 
 type Row = Record<string, string | number | null>
 

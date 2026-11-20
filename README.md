@@ -73,3 +73,41 @@ npm run dev
   `backend/app/routers/<模块>.py`，业务规则在 `backend/app/services/<模块>.py`。
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
+
+## 上传文件接入与按格式解析
+
+接入通道在「数据接入通道」页登记输入格式后，可通过同页的「上传文件接入」面板
+把文件交给格式入口，形成**接入原始事件数据集**（`app/services/ingestion_import.py`）。
+
+### 处理口径
+
+1. **逐行留痕**：文件每个物理行落一条接入原始事件，带 `文件标识 + 原始行号 + 原文`。
+   支持的格式登记在 `app/services/format_registry.py`（CSV-货运记录、CSV-通用文本、
+   JSONL-事件行）；通道声明的格式未登记时导入会被拒绝。
+2. **坏记录隔离**：引号未闭合、字段数不符、JSON 语法错误等坏行保留位置和原文，
+   状态置为「坏记录」，可在「坏记录追查」里直接指回文件与行号，永远不会进入有效事件。
+3. **两种交付策略**：
+   - 可用先行：结构正常的行立即确认为获准事件，坏行挂起等修正；
+   - 完整交付：只要存在坏行，整份文件阻断（好行保持「待投递」），修正后一次性释放。
+4. **重投修正不重复交付**：通道维度记住已确认行号。重投文件可声明首行对应的原始行号，
+   已确认行再次出现记为「已跳过」；修正成功的行沿用原行号确认，原坏记录保留原文、
+   置为「已修正」并指向修正文件。
+5. **解析明细可按原位置核对**：格式解析器（`POST /api/parser/{id}/run`）只读取
+   「已确认」且未消费的事件，每条解析明细都回指 `文件标识 + 原始行号 + 原文`，
+   已解析事件不会被二次交付。
+
+### 主要接口
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/ingestion/imports/formats` | 已登记可接入的输入格式 |
+| POST | `/api/ingestion/imports/channels/{channel_id}/files` | 按通道声明格式导入上传文件 |
+| GET | `/api/ingestion/imports/files` | 接入文件清单（含坏记录数、交付状态） |
+| GET | `/api/ingestion/imports/files/{id}/events` | 文件的接入原始事件（按行号） |
+| GET | `/api/ingestion/imports/files/{id}/dead-letters` | 坏记录追查清单 |
+| POST | `/api/ingestion/imports/files/{id}/reimport` | 重投修正文件（已确认行自动跳过） |
+| POST | `/api/parser/{id}/run` | 解析器读取获准事件并产出带行号的明细 |
+| GET | `/api/ingestion/imports/parse-results` | 解析明细查询（关联文件与行号） |
+
+后端测试：`cd backend && python3 tests/test_ingestion_flow.py`（含三行货运样本、
+中间行缺闭合引号、坏记录指回第二行、重投后首末行不重复进入解析的完整核对）。

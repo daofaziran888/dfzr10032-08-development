@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel
 
 from app.schemas import ActionResult, EntryPayload, PageResult
 from app.services.parser import ParserService
@@ -11,6 +12,13 @@ from app.services.parser import ParserService
 router = APIRouter(prefix="/api/parser", tags=["格式解析器"])
 
 service = ParserService()
+
+
+class RunParsePayload(BaseModel):
+    """格式解析器取数请求：从指定通道的接入原始事件数据集读取获准事件。"""
+
+    channel_id: int
+    file_id: int | None = None
 
 LIST_FIELDS = ["解析编号", "输入格式", "输出格式", "字段映射", "类型转换", "空值处理", "异常策略", "解析状态"]
 STATUSES = ["草稿", "已配置", "生效中", "已废弃"]
@@ -65,3 +73,27 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
+
+
+@router.post("/{entry_id}/run", response_model=ActionResult)
+def run_parse(entry_id: int, payload: RunParsePayload) -> ActionResult:
+    """让解析器从接入原始事件数据集读取获准事件，明细回指接入文件与原始行号。"""
+    result, message = service.run_parse(
+        entry_id,
+        channel_id=payload.channel_id,
+        file_id=payload.file_id,
+    )
+    if result is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry=result)
+
+
+@router.get("/results/details")
+def parse_results(
+    channel_id: int | None = None,
+    file_id: int | None = None,
+    batch: str | None = None,
+) -> dict[str, Any]:
+    """解析明细：关联接入文件标识与行号，供后续按原位置核对。"""
+    items = service.list_results(channel_id=channel_id, file_id=file_id, batch=batch)
+    return {"items": items, "total": len(items)}
